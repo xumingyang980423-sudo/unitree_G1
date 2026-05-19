@@ -1,0 +1,15 @@
+# Isaac Sim logs & checkpoints
+g1_locomotion/logs/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Isaac Sim temp
+*.dmp
+*.log
+
+# IDE
+.vscode/
+.idea/
