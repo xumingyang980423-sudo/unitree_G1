@@ -30,12 +30,32 @@ _INSPIRE_MIMIC: dict[str, tuple[str, float]] = {
     "R_thumb_distal_joint": ("R_thumb_proximal_pitch_joint", 2.4),
 }
 
+# Normal K-grasp closure (fraction of joint range). Higher => stronger squeeze on cylinder.
 _FINGER_PROXIMAL_SCALE: dict[str, float] = {
-    "R_index_proximal_joint": 0.42,
-    "R_middle_proximal_joint": 0.42,
-    "R_ring_proximal_joint": 1.00,
-    "R_pinky_proximal_joint": 1.00,
+    "R_index_proximal_joint": 0.58,
+    "R_middle_proximal_joint": 0.58,
+    "R_ring_proximal_joint": 0.92,
+    "R_pinky_proximal_joint": 0.90,
 }
+# J (tight): extra squeeze beyond K — index/middle get a bit more than ring/pinky.
+_TIGHT_FINGER_SCALE_MULT = 1.14
+_INDEX_MIDDLE_TIGHT_MULT = 1.10
+
+# Fingertip mimic: >1 so intermediate hits its limit before proximal (index-like tip curl).
+_RING_PINKY_TIP_MIMIC_MULT: dict[str, float] = {
+    "R_ring_intermediate_joint": 1.38,
+    "R_pinky_intermediate_joint": 1.32,
+}
+
+_FINGER_CLOSE_GAIN: dict[str, float] = {
+    "R_index_proximal_joint": 1.0,
+    "R_middle_proximal_joint": 1.0,
+    "R_ring_proximal_joint": 1.0,
+    "R_pinky_proximal_joint": 1.0,
+}
+# Extra drive on ring/pinky closure command (index/middle unchanged).
+_RING_PINKY_CLOSE_GAIN = 1.05
+_RING_PINKY_TIGHT_GAIN = 1.10
 
 _THUMB_YAW_JOINT = "R_thumb_proximal_yaw_joint"
 _THUMB_PITCH_JOINT = "R_thumb_proximal_pitch_joint"
@@ -43,18 +63,21 @@ _THUMB_PITCH_JOINT = "R_thumb_proximal_pitch_joint"
 # Side grasp: yaw to far side; moderate pitch aligns pad with cylinder mid-height (not top hook).
 _THUMB_YAW_OPEN = 0.06
 _THUMB_YAW_SIDE = 0.54
-_THUMB_YAW_CLOSE = 0.64
+_THUMB_YAW_CLOSE = 0.66
 _THUMB_PITCH_OPEN = 0.04
 _THUMB_PITCH_SIDE = 0.28
-_THUMB_PITCH_CLOSE = 0.34
-_THUMB_PITCH_TIGHT_EXTRA = 0.04
+_THUMB_PITCH_CLOSE = 0.36
+_THUMB_PITCH_TIGHT_EXTRA = 0.06
+_THUMB_PITCH_TIGHT_EXTRA_CLOSE = 0.03
 
 # Do not curl four fingers / thumb pinch until palm is this close to the object (meters).
 _GRASP_CLOSE_MAX_DIST = 0.095
 _GRASP_FULL_CLOSE_DIST = 0.075
 
-_RING_PINKY_U_BOOST = 1.10
-_RING_PINKY_TIGHT_U_BOOST = 1.15
+# Match teleop_contact_zone — cap closure when closer than ideal to avoid finger penetration.
+_CONTACT_DIST_IDEAL = 0.040
+_CONTACT_DIST_MIN = 0.028
+_CONTACT_DIST_PENETRATION_FLOOR = 0.017
 
 _THUMB_PREP_STEP = 0.008
 _PINCH_STEP = 0.012
@@ -95,6 +118,50 @@ def _close_scale_from_distance(dist_m: float) -> float:
     return max(0.0, min(1.0, t))
 
 
+def closure_cap_from_distance(dist_m: float, tight: bool = False) -> float:
+    """Max four-finger closure (0–1). Only tapers when hand is very close to the cylinder."""
+    if dist_m >= _CONTACT_DIST_IDEAL:
+        cap = 1.0
+    elif dist_m >= _CONTACT_DIST_MIN:
+        t = (dist_m - _CONTACT_DIST_MIN) / (_CONTACT_DIST_IDEAL - _CONTACT_DIST_MIN)
+        cap = 0.92 + 0.08 * t
+    else:
+        span = _CONTACT_DIST_MIN - _CONTACT_DIST_PENETRATION_FLOOR
+        t = max(0.0, min(1.0, (dist_m - _CONTACT_DIST_PENETRATION_FLOOR) / (span + 1e-9)))
+        cap = 0.58 + 0.34 * t
+    if tight:
+        cap = min(1.0, cap + (0.06 if dist_m >= _CONTACT_DIST_MIN else 0.03))
+    return float(max(0.45, min(1.0, cap)))
+
+
+def thumb_pinch_cap_from_distance(dist_m: float, tight: bool = False) -> float:
+    """Thumb closes less aggressively than fingers — prevents pad hooking into the cylinder."""
+    if dist_m >= _CONTACT_DIST_IDEAL:
+        cap = 0.92
+    elif dist_m >= _CONTACT_DIST_MIN:
+        t = (dist_m - _CONTACT_DIST_MIN) / (_CONTACT_DIST_IDEAL - _CONTACT_DIST_MIN)
+        cap = 0.78 + 0.14 * t
+    else:
+        span = _CONTACT_DIST_MIN - _CONTACT_DIST_PENETRATION_FLOOR
+        t = max(0.0, min(1.0, (dist_m - _CONTACT_DIST_PENETRATION_FLOOR) / (span + 1e-9)))
+        cap = 0.50 + 0.28 * t
+    if tight and dist_m >= _CONTACT_DIST_MIN:
+        cap = min(0.96, cap + 0.05)
+    elif tight:
+        cap = min(0.90, cap + 0.03)
+    return float(max(0.40, min(1.0, cap)))
+
+
+def _ring_pinky_height_scale(height_err_m: float) -> float:
+    """Boost ring/pinky curl when the cylinder sits below the finger-pad row."""
+    if height_err_m >= -0.006:
+        return 1.0
+    if height_err_m <= -0.018:
+        return 1.14
+    t = (height_err_m + 0.018) / 0.012
+    return 1.0 + 0.14 * (1.0 - t)
+
+
 def _thumb_side_prep_drives(thumb_prep_u: float) -> tuple[float, float]:
     """Move thumb to cylinder SIDE via yaw + mid-height pitch."""
     u = max(0.0, min(1.0, thumb_prep_u))
@@ -103,13 +170,14 @@ def _thumb_side_prep_drives(thumb_prep_u: float) -> tuple[float, float]:
     return _thumb_drive_u(_THUMB_YAW_JOINT, yaw_u), _thumb_drive_u(_THUMB_PITCH_JOINT, pitch_u)
 
 
-def _thumb_side_pinch_drives(pinch_u: float, tight: bool) -> tuple[float, float]:
-    """Close from the side: yaw opposition first; pitch rises only slightly."""
+def _thumb_side_pinch_drives(pinch_u: float, tight: bool, dist_m: float = 999.0) -> tuple[float, float]:
+    """Close from the side: yaw opposition + moderate pitch (pad on side, not over top)."""
     pu = max(0.0, min(1.0, pinch_u))
     yaw_u = _lerp(_THUMB_YAW_SIDE, _THUMB_YAW_CLOSE, pu)
-    pitch_u = _lerp(_THUMB_PITCH_SIDE, _THUMB_PITCH_CLOSE, pu * 0.65)
+    pitch_u = _lerp(_THUMB_PITCH_SIDE, _THUMB_PITCH_CLOSE, pu)
     if tight:
-        pitch_u = min(1.0, pitch_u + _THUMB_PITCH_TIGHT_EXTRA)
+        extra = _THUMB_PITCH_TIGHT_EXTRA if dist_m >= _CONTACT_DIST_MIN else _THUMB_PITCH_TIGHT_EXTRA_CLOSE
+        pitch_u = min(1.0, pitch_u + extra)
     return _thumb_drive_u(_THUMB_YAW_JOINT, yaw_u), _thumb_drive_u(_THUMB_PITCH_JOINT, pitch_u)
 
 
@@ -126,28 +194,38 @@ def compute_drive_targets_from_state(
     pinch_u: float,
     finger_u: float,
     tight: bool = False,
+    dist_m: float = 999.0,
+    height_err_m: float = 0.0,
 ) -> dict[str, float]:
     targets: dict[str, float] = {}
     if thumb_prep_u < 1.0:
         thumb_yaw, thumb_pitch = _thumb_side_prep_drives(thumb_prep_u)
     else:
-        thumb_yaw, thumb_pitch = _thumb_side_pinch_drives(pinch_u, tight)
+        thumb_yaw, thumb_pitch = _thumb_side_pinch_drives(pinch_u, tight, dist_m=dist_m)
     targets[_THUMB_YAW_JOINT] = thumb_yaw
     targets[_THUMB_PITCH_JOINT] = thumb_pitch
 
+    height_boost = _ring_pinky_height_scale(height_err_m)
     fu = max(0.0, min(1.0, finger_u))
     for name in INSPIRE_DRIVE_JOINTS:
         if name in (_THUMB_YAW_JOINT, _THUMB_PITCH_JOINT):
             continue
         lo, hi, role = _FOUR_FINGER_SPEC[name]
         scale = _FINGER_PROXIMAL_SCALE[name]
+        if tight:
+            scale = min(1.0, scale * _TIGHT_FINGER_SCALE_MULT)
+            if name in ("R_index_proximal_joint", "R_middle_proximal_joint"):
+                scale = min(1.0, scale * _INDEX_MIDDLE_TIGHT_MULT)
         if "ring" in name or "pinky" in name:
-            f = min(1.0, fu * _RING_PINKY_U_BOOST)
+            scale = min(1.05, scale * height_boost)
+        gain = _FINGER_CLOSE_GAIN[name]
+        f = min(1.0, fu * gain)
+        if "ring" in name or "pinky" in name:
+            f = min(1.0, fu * gain * _RING_PINKY_CLOSE_GAIN)
             if tight:
-                f = min(1.0, fu * _RING_PINKY_TIGHT_U_BOOST)
-            targets[name] = float(lo + f * scale * role * (hi - lo))
-        else:
-            targets[name] = float(lo + fu * scale * role * (hi - lo))
+                f = min(1.0, f * _RING_PINKY_TIGHT_GAIN)
+            # scale may exceed 1.0 to drive ring/pinky to the 0.5 rad joint limit.
+        targets[name] = float(lo + f * scale * role * (hi - lo))
     return targets
 
 
@@ -162,14 +240,27 @@ def compute_finger_targets_from_state(
     pinch_u: float,
     finger_u: float,
     tight: bool = False,
+    dist_m: float = 999.0,
+    height_err_m: float = 0.0,
 ) -> dict[str, float]:
-    targets = compute_drive_targets_from_state(thumb_prep_u, pinch_u, finger_u, tight=tight)
+    targets = compute_drive_targets_from_state(
+        thumb_prep_u, pinch_u, finger_u, tight=tight, dist_m=dist_m, height_err_m=height_err_m
+    )
     pitch = targets[_THUMB_PITCH_JOINT]
-    side_grasp = thumb_prep_u < 1.0 or pinch_u < 0.85
     for mimic_name, (src, mult) in _INSPIRE_MIMIC.items():
-        if mimic_name in ("R_thumb_intermediate_joint", "R_thumb_distal_joint") and side_grasp:
-            # Low pitch + no distal amplification => pad stays on cylinder side, not over top.
-            targets[mimic_name] = _clamp(mimic_name, pitch * (1.0 if "intermediate" in mimic_name else 1.05))
+        if mimic_name in ("R_thumb_intermediate_joint", "R_thumb_distal_joint"):
+            # Side grasp: never use 1.5x/2.4x chain — thumb hooks into cylinder top otherwise.
+            targets[mimic_name] = _clamp(
+                mimic_name, pitch * (1.0 if "intermediate" in mimic_name else 1.02)
+            )
+            continue
+        if mimic_name in _RING_PINKY_TIP_MIMIC_MULT:
+            lo, hi, role = _FOUR_FINGER_SPEC[mimic_name]
+            tip_mult = _RING_PINKY_TIP_MIMIC_MULT[mimic_name]
+            from_prox = targets[src] * tip_mult
+            # Full tip bend when grasp is closed (intermediate maxes at hi=0.5 rad).
+            full_tip = lo + min(1.0, finger_u) * (hi - lo)
+            targets[mimic_name] = _clamp(mimic_name, max(from_prox, full_tip))
             continue
         targets[mimic_name] = _clamp(mimic_name, targets[src] * mult)
     return targets
@@ -192,6 +283,7 @@ class DirectFingerController:
         self._want_closed = False
         self._near_scale = 1.0
         self._hand_dist_m = 999.0
+        self._height_err_m = 0.0
         self._joint_ids: list[int] | None = None
         self._device: torch.device | None = None
 
@@ -212,6 +304,7 @@ class DirectFingerController:
         self.tight = False
         self._want_closed = False
         self._hand_dist_m = 999.0
+        self._height_err_m = 0.0
         self._joint_ids = [robot.data.joint_names.index(n) for n in RIGHT_HAND_JOINTS]
         self._device = robot.data.joint_pos.device
 
@@ -225,8 +318,19 @@ class DirectFingerController:
     def contact_allowed(self) -> bool:
         return _close_scale_from_distance(self._hand_dist_m) > 0.0
 
+    @property
+    def closure_cap(self) -> float:
+        return closure_cap_from_distance(self._hand_dist_m, tight=self.tight)
+
+    @property
+    def thumb_cap(self) -> float:
+        return thumb_pinch_cap_from_distance(self._hand_dist_m, tight=self.tight)
+
     def set_hand_distance(self, dist_m: float) -> None:
         self._hand_dist_m = max(0.0, float(dist_m))
+
+    def set_contact_height_err(self, height_err_m: float) -> None:
+        self._height_err_m = float(height_err_m)
 
     def set_closed(self, closed: bool, tight: bool = False, near_scale: float = 1.0) -> None:
         self._want_closed = closed
@@ -251,8 +355,10 @@ class DirectFingerController:
         if scale <= 0.0:
             return
 
-        self.pinch_u = min(1.0, self.pinch_u + _PINCH_STEP * scale)
-        self.finger_u = min(1.0, self.finger_u + _FINGER_STEP * scale)
+        finger_cap = self.closure_cap
+        thumb_cap = self.thumb_cap
+        self.pinch_u = min(thumb_cap, self.pinch_u + _PINCH_STEP * scale)
+        self.finger_u = min(finger_cap, self.finger_u + _FINGER_STEP * scale)
 
     def apply(self, robot) -> None:
         if self._joint_ids is None:
@@ -265,8 +371,15 @@ class DirectFingerController:
             and not self._want_closed
         ):
             return
+        eff_pinch = min(self.pinch_u, self.thumb_cap)
+        eff_finger = min(self.finger_u, self.closure_cap)
         targets = compute_finger_targets_from_state(
-            self.thumb_prep_u, self.pinch_u, self.finger_u, tight=self.tight
+            self.thumb_prep_u,
+            eff_pinch,
+            eff_finger,
+            tight=self.tight,
+            dist_m=self._hand_dist_m,
+            height_err_m=self._height_err_m,
         )
         values = torch.tensor(
             [targets[n] for n in RIGHT_HAND_JOINTS],

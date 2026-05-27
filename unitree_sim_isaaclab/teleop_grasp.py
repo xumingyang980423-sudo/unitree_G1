@@ -58,6 +58,14 @@ from teleop_fingers import (
     compute_finger_targets_from_state,
 )
 from teleop_grasp_detect import grasp_metrics, is_grasped, is_lift_grasped
+
+from teleop_contact_zone import (
+    CONTACT_DIST_IDEAL_M,
+    CONTACT_DIST_MAX_M,
+    CONTACT_DIST_MIN_M,
+    contact_zone_hint,
+    contact_zone_metrics,
+)
 from teleop_hand import right_hand_vector_from_named_positions
 from teleop_pink_env_cfg import (
     BODY_LOCK_JOINTS,
@@ -233,14 +241,22 @@ def _hand_close() -> None:
     global gripper_closed, gripper_tight
     gripper_closed = True
     gripper_tight = False
-    print("[INFO] Grasp close (K) — thumb side-prep, then close when hand is near object")
+    z = contact_zone_metrics(env)
+    print(
+        f"[INFO] Grasp close (K) — zone={z['contact_zone_label']} "
+        f"dist={z['contact_dist_m']:.3f}m height_err={z['contact_height_err_m']:+.3f}m"
+    )
+    if not z["contact_zone_ok"]:
+        print(f"[zone] hint: {contact_zone_hint(str(z['contact_zone_label']))}")
+    if z["contact_zone_label"] == "too_close":
+        print("[INFO] Hand too close — finger close capped to reduce penetration;微退后再 K")
 
 
 def _hand_tight() -> None:
     global gripper_closed, gripper_tight
     gripper_closed = True
     gripper_tight = True
-    print("[INFO] Tight grasp (J) — ring/pinky + thumb pitch close; yaw (perp) unchanged")
+    print("[INFO] Tight grasp (J) — stronger squeeze: index/middle + thumb pitch + ring/pinky")
 
 
 def _update_grasp_status() -> None:
@@ -285,10 +301,16 @@ def _update_grasp_status() -> None:
         )
         ring_t = tgt["R_ring_proximal_joint"]
         pinky_t = tgt["R_pinky_proximal_joint"]
+        ring_it = tgt["R_ring_intermediate_joint"]
+        pinky_it = tgt["R_pinky_intermediate_joint"]
         ring_a = float(robot.data.joint_pos[0, robot.data.joint_names.index("R_ring_proximal_joint")].item())
         pinky_a = float(robot.data.joint_pos[0, robot.data.joint_names.index("R_pinky_proximal_joint")].item())
+        ring_ia = float(robot.data.joint_pos[0, robot.data.joint_names.index("R_ring_intermediate_joint")].item())
+        pinky_ia = float(robot.data.joint_pos[0, robot.data.joint_names.index("R_pinky_intermediate_joint")].item())
+        z = contact_zone_metrics(env)
         print(
             f"[hand] prep={_finger_ctrl.thumb_prep_u:.2f} contact_ok={_finger_ctrl.contact_allowed} "
+            f"close_cap={_finger_ctrl.closure_cap:.2f} thumb_cap={_finger_ctrl.thumb_cap:.2f} "
             f"pinch={_finger_ctrl.pinch_u:.2f} finger={_finger_ctrl.finger_u:.2f} "
             f"phase={_finger_ctrl.grasp_phase()} "
             f"tight={gripper_tight} dist={m['hand_object_dist_m']:.3f} "
@@ -299,8 +321,24 @@ def _update_grasp_status() -> None:
             f"{pf['R_pinky_proximal_joint']:.2f} "
             f"thumb_perp={tgt['R_thumb_proximal_yaw_joint']:.2f} "
             f"thumb_pitch={tgt['R_thumb_proximal_pitch_joint']:.2f} "
-            f"ring_tgt={ring_t:.2f} ring_act={ring_a:.2f} pinky_tgt={pinky_t:.2f} pinky_act={pinky_a:.2f}"
+            f"ring_p/tip={ring_t:.2f}/{ring_it:.2f} act={ring_a:.2f}/{ring_ia:.2f} "
+            f"pinky_p/tip={pinky_t:.2f}/{pinky_it:.2f} act={pinky_a:.2f}/{pinky_ia:.2f}"
         )
+        print(
+            f"[zone] {z['contact_zone_label']} score={z['contact_zone_score']:.2f} "
+            f"dist={z['contact_dist_m']:.3f}m (target {CONTACT_DIST_MIN_M:.2f}-{CONTACT_DIST_MAX_M:.2f}, "
+            f"ideal ~{CONTACT_DIST_IDEAL_M:.2f}) height_err={z['contact_height_err_m']:+.3f}m"
+        )
+        if z["contact_zone_label"] != "ideal":
+            print(f"[zone] hint: {contact_zone_hint(str(z['contact_zone_label']))}")
+
+    elif _status_counter % 30 == 0:
+        z = contact_zone_metrics(env)
+        if z["contact_dist_m"] < 0.12:
+            print(
+                f"[zone] {z['contact_zone_label']} dist={z['contact_dist_m']:.3f}m "
+                f"height_err={z['contact_height_err_m']:+.3f}m — {contact_zone_hint(str(z['contact_zone_label']))}"
+            )
 
 
 teleop.add_callback("R", _reset_scene)
@@ -311,7 +349,8 @@ teleop.add_callback("J", _hand_tight)
 print("=" * 60)
 print("  Red Block Teleop - RIGHT ARM ONLY")
 print("    W/S A/D Q/E move   Z/X T/G C/V rotate (right wrist)")
-print("    K: side grasp — move hand within ~9cm of cylinder, then thumb + fingers close   J: tight   N: open")
+print("    K: side grasp when [zone] ideal — if ring/pinky miss, press E to raise wrist first")
+print("    J: tighter squeeze (thumb capped separately to avoid penetration)")
 print("    Right arm moves ONLY while movement keys are held (stops on release)")
 print("  Click Isaac Sim window before typing. Do not press L.")
 print("=" * 60)
@@ -340,7 +379,9 @@ with torch.inference_mode():
             _snapshot_right_arm()
 
         dist = grasp_metrics(env)["hand_object_dist_m"]
+        zone = contact_zone_metrics(env)
         _finger_ctrl.set_hand_distance(dist)
+        _finger_ctrl.set_contact_height_err(float(zone["contact_height_err_m"]))
 
         if gripper_closed or gripper_tight:
             _finger_ctrl.set_closed(True, tight=gripper_tight)
