@@ -1,89 +1,108 @@
-# Copyright (c) 2022-2026, The Isaac Lab Project Developers.
-# All rights reserved.
-#
-# SPDX-License-Identifier: BSD-3-Clause
+"""G1 locomotion training via SKRL PPO."""
+import argparse, os, sys
 
-"""
-G1 崎岖地形行走训练脚本 - Isaac-Velocity-Rough-G1-v0
-
-启动方式:
-    python scripts/train.py --task Isaac-Velocity-Rough-G1-v0
-    python scripts/train.py --task Isaac-Velocity-Rough-G1-v0 --headless
-"""
-
-import argparse
-import os
-import sys
-
-# --- Fix h5py DLL loading: h5py's hdf5.dll conflicts with Kit's sensor HDF5 DLL ---
-# Must import h5py BEFORE Kit loads, otherwise Kit's HDF5 grabs the DLL name first.
-_h5py_path = os.path.join("E:", os.sep, "isaac_sim", "isaac-sim-standalone-5.1.0-windows-x86_64",
-                          "kit", "python", "Lib", "site-packages", "h5py")
+_ISAAC_SIM_PATH = os.path.join("E:", os.sep, "Issac_sim", "isaac-sim-standalone-5.1.0-windows-x86_64")
+_h5py_path = os.path.join(_ISAAC_SIM_PATH, "kit", "python", "Lib", "site-packages", "h5py")
 os.add_dll_directory(_h5py_path)
-import h5py; del h5py  # pre-load h5py's DLLs into memory
+import h5py; del h5py
 
-# --- Patch isaacsim namespace for AppLauncher ---
-# Isaac Lab expects `from isaacsim import SimulationApp`, but isaacsim is a namespace
-# package (no __init__.py). Patch SimulationApp onto the namespace and fix __file__.
-_exts_base = os.path.join("E:", os.sep, "isaac_sim", "isaac-sim-standalone-5.1.0-windows-x86_64", "exts")
+os.environ.setdefault("CARB_APP_PATH", os.path.join(_ISAAC_SIM_PATH, "kit"))
+os.environ.setdefault("ISAAC_PATH", _ISAAC_SIM_PATH)
+os.environ.setdefault("EXP_PATH", os.path.join(_ISAAC_SIM_PATH, "apps"))
+_exts_base = os.path.join(_ISAAC_SIM_PATH, "exts")
 _sim_app_path = os.path.join(_exts_base, "isaacsim.simulation_app")
-if _sim_app_path not in sys.path:
-    sys.path.insert(0, _sim_app_path)
+if _sim_app_path not in sys.path: sys.path.insert(0, _sim_app_path)
 
-import isaacsim  # namespace package
-import isaacsim.simulation_app  # loads SimulationApp into submodule
-isaacsim.SimulationApp = isaacsim.simulation_app.SimulationApp  # expose at top level
-isaacsim.__file__ = isaacsim.simulation_app.__file__  # fix namespace __file__
-
+import isaacsim
 from isaaclab.app import AppLauncher
 
-parser = argparse.ArgumentParser(description="Train G1 humanoid locomotion on rough terrain.")
-parser.add_argument("--task", type=str, default="Isaac-Velocity-Rough-G1-v0", help="Task name.")
-parser.add_argument("--num_envs", type=int, default=None, help="Number of environments (default: from config).")
-parser.add_argument("--max_iterations", type=int, default=None, help="Max training iterations.")
-parser.add_argument("--seed", type=int, default=42, help="Random seed.")
+parser = argparse.ArgumentParser()
+parser.add_argument("--task", type=str, default="Isaac-Velocity-Flat-G1-v0")
+parser.add_argument("--num_envs", type=int, default=4096)
+parser.add_argument("--train_iters", type=int, default=1000)
+parser.add_argument("--seed", type=int, default=42)
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
-import gymnasium as gym
-import torch
+import gymnasium as gym, torch, isaaclab_tasks
+from isaaclab_tasks.utils import parse_env_cfg
 
-import isaaclab_tasks  # noqa: F401
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunner, RslRlVecEnvWrapper
-from isaaclab_tasks.utils import load_cfg_from_registry, parse_env_cfg
+import skrl
+from skrl.agents.torch.ppo import PPO, PPO_CFG
+from skrl.envs.wrappers.torch import wrap_env
+from skrl.trainers.torch.sequential import SequentialTrainer
+from skrl.resources.schedulers.torch import KLAdaptiveLR
+from skrl.utils.model_instantiators.torch import deterministic_model, gaussian_model
+from skrl.memories.torch import RandomMemory
 
+env_cfg = parse_env_cfg(args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs)
+print(f"[INFO] Task: {args_cli.task} | Device: {args_cli.device} | Envs: {env_cfg.scene.num_envs}")
 
-def main():
-    task_name = args_cli.task
+env = gym.make(args_cli.task, cfg=env_cfg)
+env = wrap_env(env)
 
-    env_cfg = parse_env_cfg(task_name, device=args_cli.device, num_envs=args_cli.num_envs)
-    print(f"[INFO] Task: {task_name}")
-    print(f"[INFO] Device: {args_cli.device}")
-    print(f"[INFO] Number of envs: {env_cfg.scene.num_envs}")
+agent_cfg = PPO_CFG()
+agent_cfg.rollouts = 24
+agent_cfg.learning_epochs = 5
+agent_cfg.mini_batches = 4
+agent_cfg.discount_factor = 0.99
+agent_cfg.gae_lambda = 0.95
+agent_cfg.learning_rate = 1e-3
+agent_cfg.learning_rate_scheduler = KLAdaptiveLR
+agent_cfg.learning_rate_scheduler_kwargs = {"kl_threshold": 0.01}
+agent_cfg.grad_norm_clip = 1.0
+agent_cfg.ratio_clip = 0.2
+agent_cfg.value_clip = 0.2
+agent_cfg.entropy_loss_scale = 0.008
+agent_cfg.value_loss_scale = 1.0
 
-    agent_cfg = load_cfg_from_registry(task_name, "rsl_rl_cfg_entry_point")
-    if args_cli.max_iterations is not None:
-        agent_cfg.max_iterations = args_cli.max_iterations
-    print(f"[INFO] Max iterations: {agent_cfg.max_iterations}")
-    print(f"[INFO] Experiment name: {agent_cfg.experiment_name}")
+memory = RandomMemory(memory_size=24, num_envs=env.num_envs, device=args_cli.device)
 
-    log_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "logs", "rsl_rl", task_name))
-    os.makedirs(log_root, exist_ok=True)
-    print(f"[INFO] Log directory: {log_root}")
+log_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "logs"))
+os.makedirs(log_dir, exist_ok=True)
+agent_cfg.experiment.directory = log_dir
+agent_cfg.experiment.experiment_name = "g1_flat_walk"
+agent_cfg.experiment.checkpoint_interval = 10000
+agent_cfg.experiment.store_separately = False
 
-    env = gym.make(task_name, cfg=env_cfg)
-    env = RslRlVecEnvWrapper(env)
-    env.seed(args_cli.seed)
+print(f"[INFO] Training {args_cli.train_iters} iterations with SKRL PPO")
+print(f"[INFO] Log directory: {log_dir}")
+print(f"[DEBUG] obs_space: {env.observation_space}, act_space: {env.action_space}")
 
-    runner = RslRlOnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_root, device=args_cli.device)
-    runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
+models = {
+    "policy": gaussian_model(
+        observation_space=env.observation_space,
+        action_space=env.action_space,
+        device=args_cli.device,
+        clip_actions=False,
+        clip_log_std=True,
+        min_log_std=-20.0,
+        max_log_std=2.0,
+        network=[{"name": "net", "input": "OBSERVATIONS", "layers": [256, 128, 128], "activations": "elu"}],
+        output="ACTIONS",
+    ),
+    "value": deterministic_model(
+        observation_space=env.observation_space,
+        action_space=env.action_space,
+        device=args_cli.device,
+        clip_actions=False,
+        network=[{"name": "net", "input": "OBSERVATIONS", "layers": [256, 128, 128], "activations": "elu"}],
+        output="ONE",
+    ),
+}
 
-    env.close()
+agent = PPO(models=models, memory=memory, cfg=agent_cfg, observation_space=env.observation_space, action_space=env.action_space, device=args_cli.device)
 
+agent.init()
+print("[INFO] Agent initialized")
 
-if __name__ == "__main__":
-    main()
-    simulation_app.close()
+total_timesteps = args_cli.train_iters * env.num_envs * 24
+trainer_cfg = {"timesteps": total_timesteps, "environment_info": "log"}
+trainer = SequentialTrainer(cfg=trainer_cfg, env=env, agents=[agent])
+trainer.train()
+
+env.close()
+simulation_app.close()

@@ -1,0 +1,13 @@
+@echo off
+REM Train Allegro Hand in-hand cube reorientation
+setlocal
+set "SCRIPT_DIR=%~dp0"
+echo ================================================
+echo  Allegro Hand - Cube Reorientation RL Training
+echo  Task: Isaac-Repose-Cube-Allegro-v0
+echo ================================================
+set "ISAACLAB_DIR=E:\Issac_sim\IsaacLab"
+cd /d "%ISAACLAB_DIR%"
+set OMNI_KIT_ACCEPT_EULA=YES
+call .\isaaclab.bat -p "%SCRIPT_DIR%train_allegro.py" %*
+endlocal

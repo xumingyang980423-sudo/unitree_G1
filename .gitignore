@@ -1,5 +1,10 @@
 # Isaac Sim logs & checkpoints
 g1_locomotion/logs/
+**/logs/
+*.pt
+
+# Nested upstream git metadata (local only)
+**/.git.upstream/
 
 # Python cache
 __pycache__/

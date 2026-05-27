@@ -6,7 +6,7 @@
 
 - Windows 10/11
 - NVIDIA GPU (RTX 系列推荐)
-- [Isaac Sim 5.1.0](https://developer.nvidia.com/isaac-sim) 安装在 `E:\isaac_sim\`
+- [Isaac Sim 5.1.0](https://developer.nvidia.com/isaac-sim) 安装在 `E:\Issac_sim\IsaacSim\_build\windows-x86_64\release\`
 - 网络连接（首次运行需从 NVIDIA Nucleus 下载 USD 资产）
 
 ## 项目结构
@@ -50,6 +50,6 @@ run.bat
 
 ## 依赖
 
-- Isaac Sim 自带的 Python 解释器 (`E:\isaac_sim\...\kit\python\python.exe`)
+- Isaac Sim 自带的 Python 解释器 (`E:\Issac_sim\IsaacSim\_build\windows-x86_64\release\kit\python\python.exe`)
 - isaacsim (Kit 扩展)
 - isaaclab (已安装于 site-packages)
