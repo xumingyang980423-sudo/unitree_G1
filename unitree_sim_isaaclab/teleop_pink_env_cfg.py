@@ -18,9 +18,9 @@ from teleop_fingers import INSPIRE_DRIVE_JOINTS, RIGHT_HAND_JOINTS
 
 LEFT_HAND_JOINTS = [n for n in PINK_HAND_JOINT_NAMES if n.startswith("L_")]
 
-# Teleop object: slim cylinder (~same width as 4 cm training cube).
-TELEOP_OBJECT_RADIUS = 0.020
-TELEOP_OBJECT_HEIGHT = 0.095
+# Teleop object: radius matched to Inspire hand grasp geometry.
+TELEOP_OBJECT_RADIUS = 0.025
+TELEOP_OBJECT_HEIGHT = 0.13
 _TABLE_SURFACE_Z = OBJECT_REST_Z - OBJECT_SIZE * 0.5
 TELEOP_OBJECT_REST_Z = _TABLE_SURFACE_Z + TELEOP_OBJECT_HEIGHT * 0.5
 
@@ -87,17 +87,17 @@ _WAIST_LOCK_ACTUATOR = dict(
 _STABLE_OBJECT_RIGID = sim_utils.RigidBodyPropertiesCfg(
     disable_gravity=False,
     retain_accelerations=False,
-    linear_damping=4.0,
-    angular_damping=5.0,
-    max_linear_velocity=0.4,
-    max_angular_velocity=0.8,
-    max_depenetration_velocity=0.02,
+    linear_damping=8.0,
+    angular_damping=8.0,
+    max_linear_velocity=0.3,
+    max_angular_velocity=0.5,
+    max_depenetration_velocity=0.015,
 )
 _STABLE_OBJECT_MATERIAL = sim_utils.RigidBodyMaterialCfg(
     friction_combine_mode="max",
     restitution_combine_mode="min",
-    static_friction=2.5,
-    dynamic_friction=2.0,
+    static_friction=5.0,
+    dynamic_friction=4.0,
     restitution=0.0,
 )
 
@@ -193,32 +193,32 @@ def _tune_robot_for_teleop(env_cfg) -> None:
         effort_limit=220.0,
         velocity_limit=50,
         stiffness={
-            "R_index_proximal_joint": 240.0,
-            "R_index_intermediate_joint": 200.0,
-            "R_middle_proximal_joint": 240.0,
-            "R_middle_intermediate_joint": 200.0,
-            "R_ring_proximal_joint": 500.0,
-            "R_ring_intermediate_joint": 500.0,
-            "R_pinky_proximal_joint": 500.0,
-            "R_pinky_intermediate_joint": 500.0,
-            "R_thumb_proximal_pitch_joint": 300.0,
-            "R_thumb_proximal_yaw_joint": 300.0,
-            "R_thumb_intermediate_joint": 200.0,
-            "R_thumb_distal_joint": 180.0,
+            "R_index_proximal_joint": 450.0,
+            "R_index_intermediate_joint": 380.0,
+            "R_middle_proximal_joint": 450.0,
+            "R_middle_intermediate_joint": 380.0,
+            "R_ring_proximal_joint": 600.0,
+            "R_ring_intermediate_joint": 600.0,
+            "R_pinky_proximal_joint": 600.0,
+            "R_pinky_intermediate_joint": 600.0,
+            "R_thumb_proximal_pitch_joint": 700.0,
+            "R_thumb_proximal_yaw_joint": 700.0,
+            "R_thumb_intermediate_joint": 500.0,
+            "R_thumb_distal_joint": 450.0,
         },
         damping={
-            "R_index_proximal_joint": 36.0,
-            "R_index_intermediate_joint": 32.0,
-            "R_middle_proximal_joint": 36.0,
-            "R_middle_intermediate_joint": 32.0,
-            "R_ring_proximal_joint": 40.0,
-            "R_ring_intermediate_joint": 40.0,
-            "R_pinky_proximal_joint": 40.0,
-            "R_pinky_intermediate_joint": 40.0,
-            "R_thumb_proximal_pitch_joint": 32.0,
-            "R_thumb_proximal_yaw_joint": 32.0,
-            "R_thumb_intermediate_joint": 26.0,
-            "R_thumb_distal_joint": 22.0,
+            "R_index_proximal_joint": 50.0,
+            "R_index_intermediate_joint": 45.0,
+            "R_middle_proximal_joint": 50.0,
+            "R_middle_intermediate_joint": 45.0,
+            "R_ring_proximal_joint": 55.0,
+            "R_ring_intermediate_joint": 55.0,
+            "R_pinky_proximal_joint": 55.0,
+            "R_pinky_intermediate_joint": 55.0,
+            "R_thumb_proximal_pitch_joint": 65.0,
+            "R_thumb_proximal_yaw_joint": 65.0,
+            "R_thumb_intermediate_joint": 55.0,
+            "R_thumb_distal_joint": 50.0,
         },
     )
     actuators["hands"] = hands
@@ -253,7 +253,7 @@ def _tune_object_for_teleop(env_cfg) -> None:
         visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0), metallic=0.0),
         physics_material=_STABLE_OBJECT_MATERIAL,
     )
-    init_state = obj.init_state.replace(pos=[-4.25, -4.03, TELEOP_OBJECT_REST_Z])
+    init_state = obj.init_state.replace(pos=[-4.45, -4.05, TELEOP_OBJECT_REST_Z])
     env_cfg.scene.object = obj.replace(spawn=spawn, init_state=init_state)
 
 

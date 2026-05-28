@@ -76,6 +76,17 @@ from teleop_pink_env_cfg import (
 
 RIGHT_HAND_JOINT_NAMES = RIGHT_HAND_JOINTS
 
+# Workspace boundary: minimum distance from pelvis center in the XY plane (meters).
+# Prevents the IK target from entering the torso volume.
+_WS_MIN_DIST_FROM_PELVIS_XY = 0.18
+# In pelvis-local frame: right arm must stay on the right side (local-Y <= this threshold).
+_WS_MAX_LOCAL_Y = 0.06
+# In pelvis-local frame: don't reach too far behind the body (local-X >= this threshold).
+_WS_MIN_LOCAL_X = -0.05
+# Height bounds (world Z): don't go below hip or above head.
+_WS_MIN_Z = 0.62
+_WS_MAX_Z = 1.25
+
 right_pos = np.zeros(3, dtype=np.float64)
 right_quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)
 gripper_closed = False
@@ -107,6 +118,59 @@ def _right_wrist_pose() -> tuple[np.ndarray, np.ndarray]:
     pos = robot.data.body_pos_w[0, idx].cpu().numpy().astype(np.float64)
     quat = robot.data.body_quat_w[0, idx].cpu().numpy().astype(np.float64)
     return pos, quat
+
+
+def _pelvis_pose() -> tuple[np.ndarray, R]:
+    """Return pelvis world position and scipy Rotation."""
+    robot = env.scene["robot"]
+    idx = robot.data.body_names.index("pelvis")
+    pos = robot.data.body_pos_w[0, idx].cpu().numpy().astype(np.float64)
+    quat = robot.data.body_quat_w[0, idx].cpu().numpy().astype(np.float64)
+    rot = R.from_quat([quat[1], quat[2], quat[3], quat[0]])  # xyzw
+    return pos, rot
+
+
+def _clamp_wrist_target(target: np.ndarray) -> np.ndarray:
+    """Clamp IK target to the safe workspace envelope relative to the pelvis.
+
+    Works in pelvis-local frame so the bounds are body-relative regardless of
+    the robot's world-space position and orientation.
+    """
+    pelvis_pos, pelvis_rot = _pelvis_pose()
+
+    target[2] = np.clip(target[2], _WS_MIN_Z, _WS_MAX_Z)
+
+    # World -> pelvis local frame (XY plane only for lateral/frontal bounds).
+    delta_world = target - pelvis_pos
+    delta_local = pelvis_rot.inv().apply(delta_world)
+
+    clamped = False
+
+    # Don't reach behind the body.
+    if delta_local[0] < _WS_MIN_LOCAL_X:
+        delta_local[0] = _WS_MIN_LOCAL_X
+        clamped = True
+
+    # Right arm: stay on the right side (negative local-Y is right, positive is left).
+    if delta_local[1] > _WS_MAX_LOCAL_Y:
+        delta_local[1] = _WS_MAX_LOCAL_Y
+        clamped = True
+
+    # Minimum XY distance from pelvis center — prevents entering the torso.
+    dist_xy = np.linalg.norm(delta_local[:2])
+    if dist_xy < _WS_MIN_DIST_FROM_PELVIS_XY:
+        if dist_xy < 1e-6:
+            delta_local[1] = -_WS_MIN_DIST_FROM_PELVIS_XY
+        else:
+            scale = _WS_MIN_DIST_FROM_PELVIS_XY / dist_xy
+            delta_local[0] *= scale
+            delta_local[1] *= scale
+        clamped = True
+
+    if clamped:
+        target[:] = pelvis_pos + pelvis_rot.apply(delta_local)
+
+    return target
 
 
 def _leg_joint_names(joint_names: list[str]) -> list[str]:
@@ -370,6 +434,7 @@ with torch.inference_mode():
             if not was_moving:
                 right_pos[:], right_quat[:] = _right_wrist_pose()
             right_pos += [dx, dy, dz]
+            _clamp_wrist_target(right_pos)
             delta_r = R.from_euler("xyz", [droll, dpitch, dyaw])
             current_r = R.from_quat([right_quat[1], right_quat[2], right_quat[3], right_quat[0]])
             new_r = current_r * delta_r
