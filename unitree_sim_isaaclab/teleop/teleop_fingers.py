@@ -12,6 +12,43 @@ from grasp_rl.coupled_grasp_action import (
 
 RIGHT_HAND_JOINTS = FOUR_FINGER_JOINT_NAMES + THUMB_JOINT_NAMES
 
+_FOUR_FINGER_DRIVE_JOINTS: tuple[str, ...] = (
+    "R_index_proximal_joint",
+    "R_middle_proximal_joint",
+    "R_ring_proximal_joint",
+    "R_pinky_proximal_joint",
+)
+_FINGER_BODY_HINTS: dict[str, tuple[str, ...]] = {
+    "R_index_proximal_joint": ("r_index", "index"),
+    "R_middle_proximal_joint": ("r_middle", "middle"),
+    "R_ring_proximal_joint": ("r_ring", "ring"),
+    "R_pinky_proximal_joint": ("r_pinky", "pinky"),
+}
+_THUMB_BODY_HINTS = ("r_thumb", "thumb")
+_CONTACT_CONFIRM_FRAMES = 3
+_CYLINDER_CONTACT_MARGIN_M = 0.006
+_FINGER_SLOWDOWN_START_M = 0.024
+_FINGER_MIN_APPROACH_SCALE = 0.25
+_FINGER_POST_CONTACT_EXTRA_U: dict[str, float] = {
+    "R_index_proximal_joint": 0.12,
+    "R_middle_proximal_joint": 0.12,
+    "R_ring_proximal_joint": 0.05,
+    "R_pinky_proximal_joint": 0.05,
+}
+_FINGER_POST_CONTACT_STEP_SCALE: dict[str, float] = {
+    "R_index_proximal_joint": 0.45,
+    "R_middle_proximal_joint": 0.45,
+    "R_ring_proximal_joint": 0.22,
+    "R_pinky_proximal_joint": 0.22,
+}
+_FINGER_CONTACT_MIN_U: dict[str, float] = {
+    "R_index_proximal_joint": 0.55,
+    "R_middle_proximal_joint": 0.55,
+    "R_ring_proximal_joint": 0.62,
+    "R_pinky_proximal_joint": 0.62,
+}
+_THUMB_CONTACT_MIN_U = 0.55
+
 INSPIRE_DRIVE_JOINTS: tuple[str, ...] = (
     "R_pinky_proximal_joint",
     "R_ring_proximal_joint",
@@ -22,8 +59,8 @@ INSPIRE_DRIVE_JOINTS: tuple[str, ...] = (
 )
 
 _INSPIRE_MIMIC: dict[str, tuple[str, float]] = {
-    "R_index_intermediate_joint": ("R_index_proximal_joint", 0.50),
-    "R_middle_intermediate_joint": ("R_middle_proximal_joint", 0.50),
+    "R_index_intermediate_joint": ("R_index_proximal_joint", 0.70),
+    "R_middle_intermediate_joint": ("R_middle_proximal_joint", 0.70),
     "R_pinky_intermediate_joint": ("R_pinky_proximal_joint", 1.0),
     "R_ring_intermediate_joint": ("R_ring_proximal_joint", 1.0),
     "R_thumb_intermediate_joint": ("R_thumb_proximal_pitch_joint", 1.5),
@@ -44,8 +81,8 @@ _INDEX_MIDDLE_TIGHT_MULT = 1.06
 
 # Fingertip mimic: >1 so intermediate hits its limit before proximal (index-like tip curl).
 _RING_PINKY_TIP_MIMIC_MULT: dict[str, float] = {
-    "R_ring_intermediate_joint": 1.60,
-    "R_pinky_intermediate_joint": 1.55,
+    "R_ring_intermediate_joint": 1.75,
+    "R_pinky_intermediate_joint": 1.70,
 }
 
 _FINGER_CLOSE_GAIN: dict[str, float] = {
@@ -103,7 +140,7 @@ def _clamp(name: str, value: float) -> float:
         "R_pinky_proximal_joint",
         "R_pinky_intermediate_joint",
     ):
-        hi = max(hi, 0.62)
+        hi = max(hi, 0.68)
     return float(max(lo, min(hi, value)))
 
 
@@ -248,10 +285,29 @@ def compute_finger_targets_from_state(
     tight: bool = False,
     dist_m: float = 999.0,
     height_err_m: float = 0.0,
+    finger_u_by_joint: dict[str, float] | None = None,
 ) -> dict[str, float]:
     targets = compute_drive_targets_from_state(
         thumb_prep_u, pinch_u, finger_u, tight=tight, dist_m=dist_m, height_err_m=height_err_m
     )
+    if finger_u_by_joint:
+        for name, fu in finger_u_by_joint.items():
+            if name not in _FOUR_FINGER_SPEC:
+                continue
+            lo, hi, role = _FOUR_FINGER_SPEC[name]
+            scale = _FINGER_PROXIMAL_SCALE[name]
+            if tight:
+                scale = min(1.0, scale * _TIGHT_FINGER_SCALE_MULT)
+                if name in ("R_index_proximal_joint", "R_middle_proximal_joint"):
+                    scale = min(1.0, scale * _INDEX_MIDDLE_TIGHT_MULT)
+            if "ring" in name or "pinky" in name:
+                scale = min(1.24, scale * _ring_pinky_height_scale(height_err_m))
+            f = max(0.0, min(1.0, fu * _FINGER_CLOSE_GAIN[name]))
+            if "ring" in name or "pinky" in name:
+                f = min(1.0, f * _RING_PINKY_CLOSE_GAIN)
+                if tight:
+                    f = min(1.0, f * _RING_PINKY_TIGHT_GAIN)
+            targets[name] = float(lo + f * scale * role * (hi - lo))
     pitch = targets[_THUMB_PITCH_JOINT]
     for mimic_name, (src, mult) in _INSPIRE_MIMIC.items():
         if mimic_name in ("R_thumb_intermediate_joint", "R_thumb_distal_joint"):
@@ -293,6 +349,18 @@ class DirectFingerController:
         self._hand_dist_m = 999.0
         self._height_err_m = 0.0
         self._grasp_locked = False
+        self._finger_u_by_joint = {name: 0.0 for name in _FOUR_FINGER_DRIVE_JOINTS}
+        self._finger_contact_locked = {name: False for name in _FOUR_FINGER_DRIVE_JOINTS}
+        self._finger_contact_counts = {name: 0 for name in _FOUR_FINGER_DRIVE_JOINTS}
+        self._finger_contact_target_u: dict[str, float | None] = {
+            name: None for name in _FOUR_FINGER_DRIVE_JOINTS
+        }
+        self._finger_surface_gap_m = {name: 999.0 for name in _FOUR_FINGER_DRIVE_JOINTS}
+        self._thumb_contact_locked = False
+        self._thumb_contact_count = 0
+        self._thumb_surface_gap_m = 999.0
+        self._finger_body_ids: dict[str, list[int]] = {}
+        self._thumb_body_ids: list[int] = []
         self._joint_ids: list[int] | None = None
         self._device: torch.device | None = None
 
@@ -315,11 +383,56 @@ class DirectFingerController:
         self._hand_dist_m = 999.0
         self._height_err_m = 0.0
         self._grasp_locked = False
+        self._finger_u_by_joint = {name: 0.0 for name in _FOUR_FINGER_DRIVE_JOINTS}
+        self._finger_contact_locked = {name: False for name in _FOUR_FINGER_DRIVE_JOINTS}
+        self._finger_contact_counts = {name: 0 for name in _FOUR_FINGER_DRIVE_JOINTS}
+        self._finger_contact_target_u = {name: None for name in _FOUR_FINGER_DRIVE_JOINTS}
+        self._finger_surface_gap_m = {name: 999.0 for name in _FOUR_FINGER_DRIVE_JOINTS}
+        self._thumb_contact_locked = False
+        self._thumb_contact_count = 0
+        self._thumb_surface_gap_m = 999.0
         self._joint_ids = [robot.data.joint_names.index(n) for n in RIGHT_HAND_JOINTS]
         self._device = robot.data.joint_pos.device
+        body_names = [n.lower() for n in robot.data.body_names]
+        self._finger_body_ids = {
+            joint: [i for i, body_name in enumerate(body_names) if any(hint in body_name for hint in hints)]
+            for joint, hints in _FINGER_BODY_HINTS.items()
+        }
+        for joint, hints in _FINGER_BODY_HINTS.items():
+            tip_ids = [
+                body_id
+                for body_id in self._finger_body_ids[joint]
+                if any(part in body_names[body_id] for part in ("distal", "tip"))
+            ]
+            mid_ids = [
+                body_id
+                for body_id in self._finger_body_ids[joint]
+                if any(part in body_names[body_id] for part in ("intermediate", "distal", "tip"))
+            ]
+            self._finger_body_ids[joint] = tip_ids or mid_ids or self._finger_body_ids[joint]
+        self._thumb_body_ids = [
+            i
+            for i, body_name in enumerate(body_names)
+            if any(hint in body_name for hint in _THUMB_BODY_HINTS)
+            and any(part in body_name for part in ("intermediate", "distal", "tip"))
+        ]
+        if not self._thumb_body_ids:
+            self._thumb_body_ids = [
+                i for i, body_name in enumerate(body_names) if any(hint in body_name for hint in _THUMB_BODY_HINTS)
+            ]
 
     def grasp_phase(self) -> str:
         return thumb_grasp_phase(self.thumb_prep_u, self.pinch_u)
+
+    def contact_summary(self) -> str:
+        """Compact debug string for per-finger contact locks."""
+        return (
+            f"I{int(self._finger_contact_locked['R_index_proximal_joint'])}"
+            f"M{int(self._finger_contact_locked['R_middle_proximal_joint'])}"
+            f"R{int(self._finger_contact_locked['R_ring_proximal_joint'])}"
+            f"P{int(self._finger_contact_locked['R_pinky_proximal_joint'])}"
+            f"T{int(self._thumb_contact_locked)}"
+        )
 
     def in_prep_phase(self) -> bool:
         return self.thumb_prep_u < 1.0
@@ -347,9 +460,99 @@ class DirectFingerController:
         self.tight = tight
         self._near_scale = max(0.35, min(1.0, near_scale))
 
-    def _advance_state(self) -> None:
+    def _point_near_cylinder(self, point: torch.Tensor, object_pos: torch.Tensor, radius: float, height: float) -> bool:
+        return self._point_cylinder_surface_gap(point, object_pos, radius, height) <= _CYLINDER_CONTACT_MARGIN_M
+
+    def _point_cylinder_surface_gap(
+        self, point: torch.Tensor, object_pos: torch.Tensor, radius: float, height: float
+    ) -> float:
+        radial = torch.linalg.norm(point[:2] - object_pos[:2]).item()
+        z_err = abs((point[2] - object_pos[2]).item())
+        radial_gap = radial - radius
+        z_over = max(0.0, z_err - (height * 0.5 + 0.018))
+        return radial_gap + z_over
+
+    def _finger_approach_scale(self, joint_name: str) -> float:
+        if self._finger_contact_target_u[joint_name] is not None:
+            return _FINGER_POST_CONTACT_STEP_SCALE[joint_name]
+        gap = self._finger_surface_gap_m[joint_name]
+        if gap >= _FINGER_SLOWDOWN_START_M:
+            return 1.0
+        if gap <= _CYLINDER_CONTACT_MARGIN_M:
+            return _FINGER_MIN_APPROACH_SCALE
+        span = _FINGER_SLOWDOWN_START_M - _CYLINDER_CONTACT_MARGIN_M
+        t = (gap - _CYLINDER_CONTACT_MARGIN_M) / (span + 1e-9)
+        return _FINGER_MIN_APPROACH_SCALE + (1.0 - _FINGER_MIN_APPROACH_SCALE) * max(0.0, min(1.0, t))
+
+    def _update_contact_locks(
+        self,
+        robot,
+        object_pos: torch.Tensor | None,
+        object_radius: float,
+        object_height: float,
+    ) -> None:
+        if object_pos is None:
+            return
+        body_pos = robot.data.body_pos_w[0]
+        for joint_name, body_ids in self._finger_body_ids.items():
+            if self._finger_contact_locked[joint_name] or not body_ids:
+                continue
+            if self._finger_u_by_joint[joint_name] < _FINGER_CONTACT_MIN_U[joint_name]:
+                self._finger_contact_counts[joint_name] = 0
+                self._finger_surface_gap_m[joint_name] = 999.0
+                continue
+            gaps = [
+                self._point_cylinder_surface_gap(body_pos[body_id], object_pos, object_radius, object_height)
+                for body_id in body_ids
+            ]
+            self._finger_surface_gap_m[joint_name] = min(gaps)
+            contacted = self._finger_surface_gap_m[joint_name] <= _CYLINDER_CONTACT_MARGIN_M
+            self._finger_contact_counts[joint_name] = (
+                self._finger_contact_counts[joint_name] + 1 if contacted else 0
+            )
+            if (
+                self._finger_contact_counts[joint_name] >= _CONTACT_CONFIRM_FRAMES
+                and self._finger_contact_target_u[joint_name] is None
+            ):
+                self._finger_contact_target_u[joint_name] = min(
+                    1.0,
+                    self._finger_u_by_joint[joint_name] + _FINGER_POST_CONTACT_EXTRA_U[joint_name],
+                )
+            if (
+                self._finger_contact_target_u[joint_name] is not None
+                and self._finger_u_by_joint[joint_name] >= self._finger_contact_target_u[joint_name]
+            ):
+                self._finger_contact_locked[joint_name] = True
+
+        if not self._thumb_contact_locked and self._thumb_body_ids and self.pinch_u >= _THUMB_CONTACT_MIN_U:
+            gaps = [
+                self._point_cylinder_surface_gap(body_pos[body_id], object_pos, object_radius, object_height)
+                for body_id in self._thumb_body_ids
+            ]
+            self._thumb_surface_gap_m = min(gaps)
+            contacted = self._thumb_surface_gap_m <= _CYLINDER_CONTACT_MARGIN_M
+            self._thumb_contact_count = self._thumb_contact_count + 1 if contacted else 0
+            if self._thumb_contact_count >= _CONTACT_CONFIRM_FRAMES:
+                self._thumb_contact_locked = True
+
+    def _advance_state(
+        self,
+        robot=None,
+        object_pos: torch.Tensor | None = None,
+        object_radius: float = 0.025,
+        object_height: float = 0.13,
+    ) -> None:
         if not self._want_closed:
             self._grasp_locked = False
+            for name in _FOUR_FINGER_DRIVE_JOINTS:
+                self._finger_contact_locked[name] = False
+                self._finger_contact_counts[name] = 0
+                self._finger_contact_target_u[name] = None
+                self._finger_surface_gap_m[name] = 999.0
+                self._finger_u_by_joint[name] = max(0.0, self._finger_u_by_joint[name] - _OPEN_STEP)
+            self._thumb_contact_locked = False
+            self._thumb_contact_count = 0
+            self._thumb_surface_gap_m = 999.0
             self.thumb_prep_u = max(0.0, self.thumb_prep_u - _OPEN_STEP)
             self.pinch_u = max(0.0, self.pinch_u - _OPEN_STEP)
             self.finger_u = max(0.0, self.finger_u - _OPEN_STEP)
@@ -369,18 +572,38 @@ class DirectFingerController:
         if scale <= 0.0:
             return
 
+        if robot is not None:
+            self._update_contact_locks(robot, object_pos, object_radius, object_height)
+
         finger_cap = self.closure_cap
         thumb_cap = self.thumb_cap
-        self.pinch_u = min(thumb_cap, self.pinch_u + _PINCH_STEP * scale)
-        self.finger_u = min(finger_cap, self.finger_u + _FINGER_STEP * scale)
+        if not self._thumb_contact_locked:
+            self.pinch_u = min(thumb_cap, self.pinch_u + _PINCH_STEP * scale)
+        for name in _FOUR_FINGER_DRIVE_JOINTS:
+            if not self._finger_contact_locked[name]:
+                target_u = self._finger_contact_target_u[name]
+                cap = min(finger_cap, target_u) if target_u is not None else finger_cap
+                self._finger_u_by_joint[name] = min(
+                    cap,
+                    self._finger_u_by_joint[name] + _FINGER_STEP * scale * self._finger_approach_scale(name),
+                )
+        self.finger_u = sum(self._finger_u_by_joint.values()) / len(self._finger_u_by_joint)
 
-        if self.finger_u >= self._GRASP_LOCK_THRESHOLD and self.pinch_u >= self._GRASP_LOCK_THRESHOLD:
+        fingers_locked = sum(self._finger_contact_locked.values()) >= 3
+        fully_closed = self.finger_u >= self._GRASP_LOCK_THRESHOLD and self.pinch_u >= self._GRASP_LOCK_THRESHOLD
+        if (fingers_locked and self._thumb_contact_locked) or fully_closed:
             self._grasp_locked = True
 
-    def apply(self, robot) -> None:
+    def apply(
+        self,
+        robot,
+        object_pos: torch.Tensor | None = None,
+        object_radius: float = 0.025,
+        object_height: float = 0.13,
+    ) -> None:
         if self._joint_ids is None:
             self.reset(robot)
-        self._advance_state()
+        self._advance_state(robot, object_pos, object_radius, object_height)
         if (
             self.thumb_prep_u <= 0.0
             and self.pinch_u <= 0.0
@@ -401,6 +624,7 @@ class DirectFingerController:
             tight=self.tight,
             dist_m=self._hand_dist_m if not self._grasp_locked else 0.04,
             height_err_m=self._height_err_m,
+            finger_u_by_joint=self._finger_u_by_joint,
         )
         values = torch.tensor(
             [targets[n] for n in RIGHT_HAND_JOINTS],

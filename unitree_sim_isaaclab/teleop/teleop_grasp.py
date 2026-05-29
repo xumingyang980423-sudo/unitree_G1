@@ -71,6 +71,8 @@ from teleop.teleop_pink_env_cfg import (
     BODY_LOCK_JOINTS,
     LEG_LOCK_JOINTS_EXPR,
     RIGHT_ARM_JOINTS,
+    TELEOP_OBJECT_HEIGHT,
+    TELEOP_OBJECT_RADIUS,
     make_teleop_pink_env_cfg,
 )
 
@@ -200,7 +202,13 @@ def _apply_fingers_if_grasping() -> None:
         or _finger_ctrl.pinch_u > 0.0
         or _finger_ctrl.finger_u > 0.0
     ):
-        _finger_ctrl.apply(env.scene["robot"])
+        obj = env.scene["object"]
+        _finger_ctrl.apply(
+            env.scene["robot"],
+            object_pos=obj.data.root_pos_w[0],
+            object_radius=TELEOP_OBJECT_RADIUS,
+            object_height=TELEOP_OBJECT_HEIGHT,
+        )
 
 
 def _patch_pink_skip_when_idle() -> None:
@@ -365,6 +373,7 @@ def _update_grasp_status() -> None:
             f"close_cap={_finger_ctrl.closure_cap:.2f} thumb_cap={_finger_ctrl.thumb_cap:.2f} "
             f"pinch={_finger_ctrl.pinch_u:.2f} finger={_finger_ctrl.finger_u:.2f} "
             f"phase={_finger_ctrl.grasp_phase()} "
+            f"locks={_finger_ctrl.contact_summary()} "
             f"tight={gripper_tight} dist={m['hand_object_dist_m']:.3f} "
             f"idx/mid/ring/pinky="
             f"{pf['R_index_proximal_joint']:.2f}/"
