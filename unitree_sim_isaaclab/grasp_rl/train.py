@@ -1,8 +1,9 @@
 """Train G1 Inspire Hand pick-place - matches Unitree official config."""
 import os, sys
 
-_project_root = os.path.dirname(os.path.abspath(__file__))
-os.environ["PROJECT_ROOT"] = _project_root
+_repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+os.environ["PROJECT_ROOT"] = _repo_root
+sys.path.insert(0, _repo_root)
 
 _ISAAC_SIM_PATH = "E:\\Issac_sim\\isaac-sim-standalone-5.1.0-windows-x86_64"
 os.add_dll_directory(os.path.join(_ISAAC_SIM_PATH, "kit", "python", "Lib", "site-packages", "h5py"))
@@ -28,8 +29,7 @@ simulation_app = app_launcher.app
 
 print(f"[INFO] G1 Inspire grasp-lift | Envs: {args_cli.num_envs}")
 
-sys.path.insert(0, _project_root)
-from env_cfg import make_env_cfg
+from grasp_rl.env_cfg import make_env_cfg
 from isaaclab.envs import ManagerBasedRLEnv
 
 import skrl
@@ -64,7 +64,7 @@ agent_cfg.entropy_loss_scale = 0.005
 agent_cfg.value_loss_scale = 1.0
 
 memory = RandomMemory(memory_size=16, num_envs=env.num_envs, device=args_cli.device)
-log_dir = os.path.join(_project_root, "logs")
+log_dir = os.path.join(_repo_root, "logs")
 os.makedirs(log_dir, exist_ok=True)
 experiment_name = "g1_grasp_lift_v7"
 agent_cfg.experiment.directory = log_dir

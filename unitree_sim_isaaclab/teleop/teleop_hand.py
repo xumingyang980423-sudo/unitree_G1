@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from coupled_grasp_action import (
+from grasp_rl.coupled_grasp_action import (
     FOUR_FINGER_JOINT_NAMES,
     THUMB_JOINT_NAMES,
     _FOUR_FINGER_SPEC,
     _THUMB_SPEC,
 )
-from teleop_fingers import INSPIRE_DRIVE_JOINTS, compute_drive_targets, compute_finger_targets
+from teleop.teleop_fingers import INSPIRE_DRIVE_JOINTS, compute_drive_targets, compute_finger_targets
 
 # Same order as pickplace_unitree_g1_inspire_hand_env_cfg.ActionsCfg.pink_ik_cfg.hand_joint_names
 PINK_HAND_JOINT_NAMES: tuple[str, ...] = (

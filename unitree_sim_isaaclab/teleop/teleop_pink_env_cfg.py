@@ -7,14 +7,14 @@ import isaaclab.sim as sim_utils
 import pinocchio as pin
 from pink.tasks import FrameTask
 
-from env_cfg import OBJECT_REST_Z, OBJECT_SIZE, make_env_cfg
+from grasp_rl.env_cfg import OBJECT_REST_Z, OBJECT_SIZE, make_env_cfg
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.controllers.pink_ik import PinkIKControllerCfg
 from isaaclab.envs.mdp.actions.pink_actions_cfg import PinkInverseKinematicsActionCfg
 from isaaclab.utils import configclass
 from isaaclab_assets.robots.unitree import G1_INSPIRE_FTP_CFG
-from teleop_hand import PINK_HAND_JOINT_NAMES, PINK_RIGHT_HAND_DRIVE_JOINT_NAMES
-from teleop_fingers import INSPIRE_DRIVE_JOINTS, RIGHT_HAND_JOINTS
+from teleop.teleop_hand import PINK_HAND_JOINT_NAMES, PINK_RIGHT_HAND_DRIVE_JOINT_NAMES
+from teleop.teleop_fingers import INSPIRE_DRIVE_JOINTS, RIGHT_HAND_JOINTS
 
 LEFT_HAND_JOINTS = [n for n in PINK_HAND_JOINT_NAMES if n.startswith("L_")]
 
@@ -190,17 +190,17 @@ def _tune_robot_for_teleop(env_cfg) -> None:
     )
     hands = ImplicitActuatorCfg(
         joint_names_expr=list(RIGHT_HAND_JOINTS),
-        effort_limit=220.0,
+        effort_limit=320.0,
         velocity_limit=50,
         stiffness={
             "R_index_proximal_joint": 450.0,
-            "R_index_intermediate_joint": 380.0,
+            "R_index_intermediate_joint": 520.0,
             "R_middle_proximal_joint": 450.0,
-            "R_middle_intermediate_joint": 380.0,
-            "R_ring_proximal_joint": 600.0,
-            "R_ring_intermediate_joint": 600.0,
-            "R_pinky_proximal_joint": 600.0,
-            "R_pinky_intermediate_joint": 600.0,
+            "R_middle_intermediate_joint": 520.0,
+            "R_ring_proximal_joint": 850.0,
+            "R_ring_intermediate_joint": 900.0,
+            "R_pinky_proximal_joint": 850.0,
+            "R_pinky_intermediate_joint": 900.0,
             "R_thumb_proximal_pitch_joint": 700.0,
             "R_thumb_proximal_yaw_joint": 700.0,
             "R_thumb_intermediate_joint": 500.0,
@@ -208,13 +208,13 @@ def _tune_robot_for_teleop(env_cfg) -> None:
         },
         damping={
             "R_index_proximal_joint": 50.0,
-            "R_index_intermediate_joint": 45.0,
+            "R_index_intermediate_joint": 75.0,
             "R_middle_proximal_joint": 50.0,
-            "R_middle_intermediate_joint": 45.0,
-            "R_ring_proximal_joint": 55.0,
-            "R_ring_intermediate_joint": 55.0,
-            "R_pinky_proximal_joint": 55.0,
-            "R_pinky_intermediate_joint": 55.0,
+            "R_middle_intermediate_joint": 75.0,
+            "R_ring_proximal_joint": 80.0,
+            "R_ring_intermediate_joint": 105.0,
+            "R_pinky_proximal_joint": 80.0,
+            "R_pinky_intermediate_joint": 105.0,
             "R_thumb_proximal_pitch_joint": 65.0,
             "R_thumb_proximal_yaw_joint": 65.0,
             "R_thumb_intermediate_joint": 55.0,

@@ -34,7 +34,7 @@ cd E:\unitreeG1\unitree_G1\unitree_sim_isaaclab
 `run_teleop.bat` 内部调用：
 
 ```bat
-E:\Issac_sim\IsaacLab\isaaclab.bat -p teleop_grasp.py --device cuda:0
+E:\Issac_sim\IsaacLab\isaaclab.bat -p teleop\teleop_grasp.py --device cuda:0
 ```
 
 ### 注意事项
@@ -71,14 +71,14 @@ E:\Issac_sim\IsaacLab\isaaclab.bat -p teleop_grasp.py --device cuda:0
 
 | 文件 | 作用 |
 |------|------|
-| `teleop_grasp.py` | 主循环：键盘、Pink 补丁、左/右臂锁定、抓取 UI |
-| `teleop_pink_env_cfg.py` | Teleop 环境：仅右腕 Pink IK、圆柱物体、actuator 拆分 |
-| `teleop_hand.py` | Pink 24 维 hand 向量（顺序与官方 pickplace 一致） |
-| `teleop_fingers.py` | 右手 12 关节直接 PD + 渐进 closure |
-| `teleop_grasp_detect.py` | 抓取检测（复用 `env_cfg.py` 奖励逻辑） |
-| `run_teleop.bat` | Windows 启动脚本 |
+| `teleop/teleop_grasp.py` | 主循环：键盘、Pink 补丁、左/右臂锁定、抓取 UI |
+| `teleop/teleop_pink_env_cfg.py` | Teleop 环境：仅右腕 Pink IK、圆柱物体、actuator 拆分 |
+| `teleop/teleop_hand.py` | Pink 24 维 hand 向量（顺序与官方 pickplace 一致） |
+| `teleop/teleop_fingers.py` | 右手 12 关节直接 PD + 渐进 closure |
+| `teleop/teleop_grasp_detect.py` | 抓取检测（复用 `grasp_rl/env_cfg.py` 奖励逻辑） |
+| `scripts/run_teleop.bat` | Windows 启动脚本（根目录 `run_teleop.bat` 转发） |
 
-训练相关（同仓库，非 teleop 专用）：`env_cfg.py`、`coupled_grasp_action.py`、`train.py`
+训练相关（`grasp_rl/`）：`env_cfg.py`、`coupled_grasp_action.py`、`train.py`
 
 ---
 
@@ -150,4 +150,4 @@ teleop 中:           orig_apply() → 立刻 _enforce_left_side()
 
 ## 9. 新 Session 建议第一句话
 
-> 请读 `unitree_sim_isaaclab/TELEOP_SESSION.md`，继续优化 G1 Inspire 键盘遥操作（`teleop_grasp.py`），环境是 conda `env_isaaclab` + `run_teleop.bat`。
+> 请读 `unitree_sim_isaaclab/docs/TELEOP_SESSION.md` 与 `docs/PROJECT_LAYOUT.md`，继续优化 G1 Inspire 键盘遥操作（`teleop/teleop_grasp.py`），环境是 conda `env_isaaclab` + `run_teleop.bat`。

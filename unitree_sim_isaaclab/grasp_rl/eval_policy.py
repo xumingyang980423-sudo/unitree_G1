@@ -4,8 +4,9 @@ import glob
 import os
 import sys
 
-_project_root = os.path.dirname(os.path.abspath(__file__))
-os.environ["PROJECT_ROOT"] = _project_root
+_repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+os.environ["PROJECT_ROOT"] = _repo_root
+sys.path.insert(0, _repo_root)
 
 _ISAAC_SIM_PATH = os.environ.get(
     "ISAAC_SIM_PATH", r"E:\Issac_sim\isaac-sim-standalone-5.1.0-windows-x86_64"
@@ -35,8 +36,7 @@ simulation_app = app_launcher.app
 
 import torch
 
-sys.path.insert(0, _project_root)
-from env_cfg import LIFT_TARGET_Z, OBJECT_REST_Z, _right_finger_closure, _task_success, make_env_cfg
+from grasp_rl.env_cfg import LIFT_TARGET_Z, OBJECT_REST_Z, _right_finger_closure, _task_success, make_env_cfg
 from isaaclab.envs import ManagerBasedRLEnv
 
 env_cfg = make_env_cfg(args_cli.num_envs, sim_device=args_cli.device)

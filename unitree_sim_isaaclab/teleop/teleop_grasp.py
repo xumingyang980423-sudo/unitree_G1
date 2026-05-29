@@ -6,8 +6,9 @@ import os
 import re
 import sys
 
-_project_root = os.path.dirname(os.path.abspath(__file__))
-os.environ["PROJECT_ROOT"] = _project_root
+_repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+os.environ["PROJECT_ROOT"] = _repo_root
+sys.path.insert(0, _repo_root)
 
 _ISAAC_SIM_PATH = "E:\\Issac_sim\\isaac-sim-standalone-5.1.0-windows-x86_64"
 os.add_dll_directory(os.path.join(_ISAAC_SIM_PATH, "kit", "python", "Lib", "site-packages", "h5py"))
@@ -49,25 +50,24 @@ import isaaclab_tasks.manager_based.manipulation.pick_place  # noqa: F401
 from isaaclab.devices import Se3Keyboard, Se3KeyboardCfg
 from isaaclab.envs import ManagerBasedRLEnv
 
-sys.path.insert(0, _project_root)
-from teleop_fingers import (
+from teleop.teleop_fingers import (
     DirectFingerController,
     RIGHT_HAND_JOINTS,
     _GRASP_CLOSE_MAX_DIST,
     compute_drive_targets,
     compute_finger_targets_from_state,
 )
-from teleop_grasp_detect import grasp_metrics, is_grasped, is_lift_grasped
+from teleop.teleop_grasp_detect import grasp_metrics, is_grasped, is_lift_grasped
 
-from teleop_contact_zone import (
+from teleop.teleop_contact_zone import (
     CONTACT_DIST_IDEAL_M,
     CONTACT_DIST_MAX_M,
     CONTACT_DIST_MIN_M,
     contact_zone_hint,
     contact_zone_metrics,
 )
-from teleop_hand import right_hand_vector_from_named_positions
-from teleop_pink_env_cfg import (
+from teleop.teleop_hand import right_hand_vector_from_named_positions
+from teleop.teleop_pink_env_cfg import (
     BODY_LOCK_JOINTS,
     LEG_LOCK_JOINTS_EXPR,
     RIGHT_ARM_JOINTS,
@@ -76,12 +76,11 @@ from teleop_pink_env_cfg import (
 
 RIGHT_HAND_JOINT_NAMES = RIGHT_HAND_JOINTS
 
-# Workspace boundary: minimum distance from pelvis center in the XY plane (meters).
-# Prevents the IK target from entering the torso volume.
-_WS_MIN_DIST_FROM_PELVIS_XY = 0.18
-# In pelvis-local frame: right arm must stay on the right side (local-Y <= this threshold).
-_WS_MAX_LOCAL_Y = 0.06
-# In pelvis-local frame: don't reach too far behind the body (local-X >= this threshold).
+# Workspace boundary in pelvis-local frame.
+# local +Y = robot left, local -Y = robot right.
+# Keep the right wrist on the right side without projecting A/D motion outward.
+_WS_MAX_LOCAL_Y = -0.14
+# In pelvis-local frame: don't reach too far behind the body.
 _WS_MIN_LOCAL_X = -0.05
 # Height bounds (world Z): don't go below hip or above head.
 _WS_MIN_Z = 0.62
@@ -154,17 +153,6 @@ def _clamp_wrist_target(target: np.ndarray) -> np.ndarray:
     # Right arm: stay on the right side (negative local-Y is right, positive is left).
     if delta_local[1] > _WS_MAX_LOCAL_Y:
         delta_local[1] = _WS_MAX_LOCAL_Y
-        clamped = True
-
-    # Minimum XY distance from pelvis center — prevents entering the torso.
-    dist_xy = np.linalg.norm(delta_local[:2])
-    if dist_xy < _WS_MIN_DIST_FROM_PELVIS_XY:
-        if dist_xy < 1e-6:
-            delta_local[1] = -_WS_MIN_DIST_FROM_PELVIS_XY
-        else:
-            scale = _WS_MIN_DIST_FROM_PELVIS_XY / dist_xy
-            delta_local[0] *= scale
-            delta_local[1] *= scale
         clamped = True
 
     if clamped:

@@ -6,8 +6,9 @@ import sys
 
 import torch
 
-_project_root = os.path.dirname(os.path.abspath(__file__))
-os.environ["PROJECT_ROOT"] = _project_root
+_repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+os.environ["PROJECT_ROOT"] = _repo_root
+sys.path.insert(0, _repo_root)
 
 _ISAAC_SIM_PATH = "E:\\Issac_sim\\isaac-sim-standalone-5.1.0-windows-x86_64"
 os.add_dll_directory(os.path.join(_ISAAC_SIM_PATH, "kit", "python", "Lib", "site-packages", "h5py"))
@@ -32,8 +33,7 @@ args_cli = parser.parse_args()
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
-sys.path.insert(0, _project_root)
-from env_cfg import make_env_cfg
+from grasp_rl.env_cfg import make_env_cfg
 from isaaclab.envs import ManagerBasedRLEnv
 
 env_cfg = make_env_cfg(args_cli.num_envs, sim_device=args_cli.device)
@@ -46,7 +46,7 @@ if checkpoint is not None:
         checkpoint = checkpoint.replace(ch, "")
     checkpoint = checkpoint.strip().strip('"')
 if checkpoint is None:
-    log_dir = os.path.join(_project_root, "logs")
+    log_dir = os.path.join(_repo_root, "logs")
     for sub in ("g1_grasp_lift_v7", "g1_grasp_lift_v6", "g1_grasp_lift_v5", "g1_grasp_lift_v4", "g1_grasp_lift_v3", "g1_grasp_lift_v2", "g1_grasp_lift", "g1_pickplace_v2", "g1_pickplace"):
         candidates = sorted(glob.glob(os.path.join(log_dir, sub, "checkpoints", "agent_*.pt")))
         if candidates:

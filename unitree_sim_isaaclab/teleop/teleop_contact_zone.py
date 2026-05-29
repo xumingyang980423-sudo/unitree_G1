@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import torch
 
-from env_cfg import _right_hand_approach_pos
+from grasp_rl.env_cfg import _right_hand_approach_pos
 
 # Hand centroid ↔ object center (m). Too small = object at finger base/palm; too large = miss.
 CONTACT_DIST_MIN_M = 0.028

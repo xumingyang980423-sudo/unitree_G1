@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import torch
 
-from coupled_grasp_action import (
+from grasp_rl.coupled_grasp_action import (
     FOUR_FINGER_JOINT_NAMES,
     THUMB_JOINT_NAMES,
     _FOUR_FINGER_SPEC,
@@ -22,8 +22,8 @@ INSPIRE_DRIVE_JOINTS: tuple[str, ...] = (
 )
 
 _INSPIRE_MIMIC: dict[str, tuple[str, float]] = {
-    "R_index_intermediate_joint": ("R_index_proximal_joint", 0.55),
-    "R_middle_intermediate_joint": ("R_middle_proximal_joint", 0.55),
+    "R_index_intermediate_joint": ("R_index_proximal_joint", 0.50),
+    "R_middle_intermediate_joint": ("R_middle_proximal_joint", 0.50),
     "R_pinky_intermediate_joint": ("R_pinky_proximal_joint", 1.0),
     "R_ring_intermediate_joint": ("R_ring_proximal_joint", 1.0),
     "R_thumb_intermediate_joint": ("R_thumb_proximal_pitch_joint", 1.5),
@@ -33,10 +33,10 @@ _INSPIRE_MIMIC: dict[str, tuple[str, float]] = {
 # Normal K-grasp closure (fraction of joint range). Higher => stronger squeeze on cylinder.
 # Index/middle range is 1.7 rad vs ring/pinky 0.5 rad — scale down index/middle to avoid penetration.
 _FINGER_PROXIMAL_SCALE: dict[str, float] = {
-    "R_index_proximal_joint": 0.52,
-    "R_middle_proximal_joint": 0.52,
-    "R_ring_proximal_joint": 1.0,
-    "R_pinky_proximal_joint": 1.0,
+    "R_index_proximal_joint": 0.44,
+    "R_middle_proximal_joint": 0.44,
+    "R_ring_proximal_joint": 1.24,
+    "R_pinky_proximal_joint": 1.24,
 }
 # J (tight): extra squeeze beyond K — index/middle get a bit more than ring/pinky.
 _TIGHT_FINGER_SCALE_MULT = 1.08
@@ -44,8 +44,8 @@ _INDEX_MIDDLE_TIGHT_MULT = 1.06
 
 # Fingertip mimic: >1 so intermediate hits its limit before proximal (index-like tip curl).
 _RING_PINKY_TIP_MIMIC_MULT: dict[str, float] = {
-    "R_ring_intermediate_joint": 1.38,
-    "R_pinky_intermediate_joint": 1.32,
+    "R_ring_intermediate_joint": 1.60,
+    "R_pinky_intermediate_joint": 1.55,
 }
 
 _FINGER_CLOSE_GAIN: dict[str, float] = {
@@ -97,6 +97,13 @@ def _joint_limits(name: str) -> tuple[float, float]:
 
 def _clamp(name: str, value: float) -> float:
     lo, hi = _joint_limits(name)
+    if name in (
+        "R_ring_proximal_joint",
+        "R_ring_intermediate_joint",
+        "R_pinky_proximal_joint",
+        "R_pinky_intermediate_joint",
+    ):
+        hi = max(hi, 0.62)
     return float(max(lo, min(hi, value)))
 
 
@@ -274,7 +281,7 @@ def compute_finger_targets(closure: float, tight: bool = False) -> dict[str, flo
 class DirectFingerController:
     """Thumb side-prep then side-pinch; four fingers close after thumb prep completes."""
 
-    _GRASP_LOCK_THRESHOLD = 0.7
+    _GRASP_LOCK_THRESHOLD = 0.95
 
     def __init__(self) -> None:
         self.thumb_prep_u = 0.0

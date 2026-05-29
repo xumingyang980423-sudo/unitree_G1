@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import torch
 
-from env_cfg import (
+from grasp_rl.env_cfg import (
     FOUR_FINGER_PROXIMAL_NAMES,
     _RIGHT_FINGER_CLOSE_RANGE,
     _four_finger_closure,
@@ -11,7 +11,7 @@ from env_cfg import (
     _right_finger_closure,
     _thumb_closure,
 )
-from teleop_pink_env_cfg import TELEOP_OBJECT_REST_Z
+from teleop.teleop_pink_env_cfg import TELEOP_OBJECT_REST_Z
 
 
 def grasp_metrics(env) -> dict[str, float]:

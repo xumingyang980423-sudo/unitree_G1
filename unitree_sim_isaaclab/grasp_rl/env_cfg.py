@@ -1,8 +1,7 @@
 """G1 Inspire Hand grasp-and-lift RL env (right arm + right hand)."""
-import os
+from grasp_rl._paths import setup_repo_paths
 
-_project_root = os.path.dirname(os.path.abspath(__file__))
-os.environ.setdefault("PROJECT_ROOT", _project_root)
+_project_root = setup_repo_paths()  # repo root; used for assets/ paths below
 
 import torch
 import isaaclab.sim as sim_utils
@@ -23,7 +22,7 @@ from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.utils import configclass
 
-from coupled_grasp_action import (
+from grasp_rl.coupled_grasp_action import (
     DualGroupGraspActionCfg,
     FOUR_FINGER_JOINT_NAMES,
     GRASP_ENABLE_DISTANCE,
